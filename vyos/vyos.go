@@ -1,261 +1,151 @@
 package vyos
 
 import (
-	"bytes"
-	"context"
 	"crypto/tls"
-	"encoding/json"
 	"fmt"
-	"mime/multipart"
+	"log"
+	"net"
 	"net/http"
-	"sync"
+	"net/http/httputil"
+	"net/url"
+	"time"
 )
 
-const (
-
-	// defaultUserAgent is the default user agent used by the VyOS API client.
-	defaultUserAgent = "go-vyos"
-
-	// OPMode constants
-	OPModeShow      OPMode = "show"      // OPModeShow is the show operational mode.
-	OPModeSet       OPMode = "set"       // OPModeSet is the set operational mode.
-	OPModeComment   OPMode = "comment"   // OPModeComment is the comment operational mode.
-	OPModeGenerate  OPMode = "generate"  // OPModeGenerate is the generate operational mode.
-	OPModeConfigure OPMode = "configure" // OPModeConfigure is the configure operational mode.
-)
-
-// Vyos represents a VyOS API client.
+// Client represents a VyOS API client.
 type Client struct {
-	mu     sync.Mutex   // Mutex used to synchronize API requests.
-	client *http.Client // HTTP client used to communicate with the API.
-
-	BaseURL   string // Base URL for API requests.
-	UserAgent string // User agent used when communicating with the API.
-
-	Token string // Token used for authentication.
-
-	common service // Reuse a single struct instead of allocating one for each service on the heap.
-
-	// Services used for talking to different parts of the VyOS API.
-	Show *ShowService
-	Conf *ConfigService
-	Gen  *GenerateService
-	Reset *ResetService
-	Power      *PowerService
-	Image      *ImageService
-	ConfigFile *ConfigService
+	httpClient *http.Client // HTTP client used to communicate with the API.
+	baseURL    *url.URL
+	token      string // token used for authentication.
+	userAgent  string // User agent used when communicating with the API.
 }
 
-// Service represents a VyOS API service.
-// These map to the different endponits in the VyOS API:
-// /retrieve, /set, /delete, /comment, /commit, /discard, /rollback, /show, /run
-type service struct {
-	client *Client
-}
-
-// Request represents a request to the VyOS API.
-type Response struct {
-	*http.Response
-}
-
-type OPMode string // OPMode is a type for the different operational modes of the VyOS API.
-type Path []string // Path is a type for the different paths of the VyOS API.
-
-// Request represents a request to the VyOS API.
-type Request struct {
-	OPMode OPMode `json:"op,omitempty"`
-	Path   Path   `json:"path,omitempty"`
-}
-
-// RawResponse represents a raw response from the VyOS API.
-type RawResponse struct {
-	Success bool        `json:"success,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
-	Error   string      `json:"error,omitempty"`
-}
-
-// NewClient creates a new VyOS API client.
-// If no HTTP client is provided, a new one is created.
-func NewClient(httpClient *http.Client) *Client {
-
-	// If no HTTP client is provided, create a new one.
-	if httpClient == nil {
-		httpClient = &http.Client{}
+// NewClient creates a new VyOS API client. Host must be
+// a value url string (http://host:port) or a host:port string. Otherwise
+// an error is returned.
+func NewClient(host string, opts ...Option) (*Client, error) {
+	baseURL, ok := buildURL(host)
+	if !ok {
+		return nil, fmt.Errorf("could not parse as URL or host:port: %s", host)
 	}
-
-	// Create a new pointer to the http.Client struct.
-	h := *httpClient
-
-	// Create a new Vyos client.
-	c := &Client{client: &h}
-	c.init()
-
-	return c
+	c := &Client{
+		baseURL: baseURL,
+		httpClient: &http.Client{
+			Timeout:   5 * time.Second,
+			Transport: http.DefaultTransport,
+		},
+		userAgent: defaultUserAgent,
+	}
+	for _, o := range opts {
+		o(c)
+	}
+	return c, nil
 }
 
-// Client returns a copy of the http.Client used by the VyOS API client.
-func (c *Client) Client() *http.Client {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	clientCopy := *c.client
-	return &clientCopy
+func buildURL(host string) (*url.URL, bool) {
+	u, err := url.Parse(host)
+	if err == nil {
+		return u, true
+	}
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return &url.URL{
+			Scheme: "https",
+			Host:   host,
+		}, true
+	}
+	return nil, false
 }
 
-// WithURL sets the base URL for the VyOS API client.
-func (c *Client) WithURL(url string) *Client {
-	newClient := c.copy()
-	defer newClient.init()
+func (c *Client) OpMode() *OpMode         { return (*OpMode)(c) }
+func (c *Client) ConfigMode() *ConfigMode { return (*ConfigMode)(c) }
 
-	// Set the base URL for the API client.
-	// TODO: Validate the URL. Parse() returns an error if the URL is invalid.
-	newClient.BaseURL = url
+// Option is the type passed to NewClient to configure the client
+type Option func(*Client)
 
-	return newClient
+// Token sets the token for the VyOS API client.
+func Token(token string) Option {
+	return func(c *Client) {
+		c.token = token
+	}
 }
 
-// WithToken sets the token for the VyOS API client.
-func (c *Client) WithToken(token string) *Client {
-	newClient := c.copy()
-	defer newClient.init()
-
-	// Set the token for the API client.
-	newClient.Token = token
-
-	return newClient
-}
-
-// Insecure sets the InsecureSkipVerify field of the TLS configuration to true.
-func (c *Client) Insecure() *Client {
-	newClient := c.copy()
-	defer newClient.init()
-
-	// Type assertion to ensure transport is of type *http.Transport
-	if t, ok := newClient.client.Transport.(*http.Transport); ok {
-		t.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true,
-		}
-		newClient.client.Transport = t
-	} else {
-		// Handle the case where the transport is not of type *http.Transport
-		newClient.client.Transport = &http.Transport{
+// Insecure enables http.Transport.TLSClientConfig.InsecureSkipVerify
+// for calling hosts with self-signed certificates.
+func Insecure() Option {
+	return func(c *Client) {
+		// Type assertion to ensure transport is of type *http.Transport
+		if t, ok := c.httpClient.Transport.(*http.Transport); ok {
+			if t.TLSClientConfig == nil {
+				t.TLSClientConfig = &tls.Config{}
+			}
+			t.TLSClientConfig.InsecureSkipVerify = true
+			return
+		} // Handle the case where the transport is not of type *http.Transport
+		c.httpClient.Transport = &http.Transport{
 			TLSClientConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},
 		}
 	}
-
-	return newClient
 }
 
-// init initializes the VyOS API client.
-func (c *Client) init() {
-
-	if c.client == nil {
-		c.client = &http.Client{}
-	}
-
-	if c.UserAgent == "" {
-		c.UserAgent = defaultUserAgent
-	}
-
-	c.common.client = c
-	c.Gen = (*GenerateService)(&c.common)
-	c.Show = (*ShowService)(&c.common)
-	c.Conf = (*ConfigService)(&c.common)
-	c.Power = (*PowerService)(&c.common)
-	c.Image = (*ImageService)(&c.common)
-	c.Reset = (*ResetService)(&c.common)
-
-}
-
-// copy returns a copy of the VyOS API client.
-func (c *Client) copy() *Client {
-
-	// Create a new Vyos client.
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	return &Client{
-		client:    &http.Client{},
-		BaseURL:   c.BaseURL,
-		Token:     c.Token,
-		UserAgent: c.UserAgent,
+// UserAgent sets the User-Agent.
+func UserAgent(s string) Option {
+	return func(c *Client) {
+		c.userAgent = s
 	}
 }
 
-// NewRequest creates a new HTTP request for the VyOS API.
-func (c *Client) NewRequest(urlStr string, request interface{}) (*http.Request, error) {
+// Timeout sets the default timeout for the http.Client.
+func Timeout(d time.Duration) Option {
+	return func(c *Client) {
+		c.httpClient.Timeout = d
+	}
+}
 
-	// The method must always be POST. The VyOS API only supports POST requests.
-	method := http.MethodPost
+// WithHTTPClient updates the Client to use the provided HTTP client.
+func WithHTTPClient(httpClient *http.Client) Option {
+	return func(c *Client) {
+		c.httpClient = httpClient
+	}
+}
 
-	// Resolve the URL.
-	u := c.BaseURL + urlStr
+// DebugLogging enables printing the HTTP Request and HTTP Response
+// of each interaction for debugging.
+func DebugLogging() Option {
+	return func(c *Client) {
+		c.httpClient.Transport = &loggingTransport{c.httpClient.Transport}
+	}
+}
 
-	// Marshal the struct into JSON
-	jsonData, err := json.Marshal(request)
+// loggingTransport wraps an http.RoundTripper to log HTTP request and response
+// values.
+type loggingTransport struct {
+	http.RoundTripper
+}
+
+func (t *loggingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	// Dump the request data including the body (true)
+	reqDump, err := httputil.DumpRequestOut(r, true)
 	if err != nil {
-		return nil, err
+		log.Printf("Error dumping request: %v", err)
+	} else {
+		fmt.Printf("REQUEST:\n%s\n", reqDump)
 	}
 
-	// Create a bytes.Buffer from the JSON data
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	writer.WriteField("data", string(jsonData))
-	writer.WriteField("key", c.Token)
-	writer.Close()
-
-	req, err := http.NewRequest(method, u, body)
+	// Execute the actual request
+	resp, err := t.RoundTripper.RoundTrip(r)
 	if err != nil {
-		return nil, err
+		// Log error and return
+		log.Printf("Error making request: %v", err)
+		return resp, err
 	}
 
-	// Set the content type to multipart/form-data
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	// Set the content length header
-	req.Header.Set("Content-Length", fmt.Sprintf("%d", body.Len()))
-
-	// Set the user agent if it is provided.
-	if c.UserAgent != "" {
-		req.Header.Set("User-Agent", c.UserAgent)
-	}
-
-	return req, nil
-}
-
-// Do sends an API request and returns the API response.
-func (c *Client) Do(ctx context.Context, req *http.Request, v interface{}) (*Response, error) {
-
-	// Check if the context is nil. We always need a context - so they can be cancelled.
-	if ctx == nil {
-		return nil, ErrContextNil
-	}
-
-	if v == nil {
-		return nil, ErrInterfaceNil
-	}
-
-	r, err := c.client.Do(req.WithContext(ctx))
+	// Dump the response data including the body (true)
+	respDump, err := httputil.DumpResponse(resp, true)
 	if err != nil {
-		return nil, err
+		log.Printf("Error dumping response: %v", err)
+	} else {
+		fmt.Printf("RESPONSE:\n%s\n", respDump)
 	}
-
-	resp := &Response{Response: r}
-	defer resp.Body.Close()
-
-	// Decode the response body into the provided interface.
-	errDecode := json.NewDecoder(resp.Body).Decode(v)
-	if errDecode != nil {
-		return nil, errDecode
-	}
-
-	return resp, nil
-
-}
-
-func (c *Client) Save(ctx context.Context) {
-	c.mu.Lock()
-	c.Conf.Save(ctx, "")
-	c.mu.Unlock()
+	return resp, err
 }

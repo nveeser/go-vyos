@@ -1,6 +1,6 @@
 # go-vyos
 
-go-vyos is a Go client library for accessing the [Vyos REST API](https://docs.vyos.io/en/latest/automation/vyos-api.html#vyosapi)
+go-vyos is a Go client library for accessing the [VyOS REST API](https://docs.vyos.io/en/latest/automation/vyos-api.html#vyosapi)
 
 ## Usage
 
@@ -8,154 +8,102 @@ go-vyos is a Go client library for accessing the [Vyos REST API](https://docs.vy
 import "github.com/ganawaj/go-vyos/vyos"
 ```
 
-Construct a new Vyos client, then use the various services on the client to access different parts of the Vyos API. For example:
+Construct a new VyOS client by providing the host URL (or host:port) and options like authentication token and TLS configuration.
 
 ```go
-c := vyos.NewClient(nil).WithToken("AUTH_KEY").WithURL("https://192.168.0.1")
+c, err := vyos.NewClient("https://192.168.0.1", 
+    vyos.Token("AUTH_KEY"),
+    vyos.Insecure(), // Use for self-signed certificates
+)
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
-If you're using self-signed certificates or don't want to verify certificates, you can disable TLS verification by adding .Insecure():
+The client separates functionality into `ConfigMode()` and `OpMode()`.
+
+### Configuration Mode (ConfigMode)
+
+#### Set a Configuration Value
 
 ```go
-c := vyos.NewClient(nil).WithToken("AUTH_KEY").WithURL("https://192.168.0.1").Insecure()
+err := c.ConfigMode().Set(ctx, "interfaces ethernet eth0 address 192.168.1.1/24")
+if err != nil {
+    log.Fatalf("Error: %v", err)
+}
 ```
 
-### Configure, then Set
+#### Delete a Configuration Object
 
 ```go
-    out, resp, err := c.Conf.Set(ctx, "interfaces ethernet eth0 address 192.168.1.1/24")
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
+err := c.ConfigMode().Delete(ctx, "interfaces dummy dum1")
 ```
 
-### Show a Single Object Value
+#### Show Configuration Data
 
 ```go
+// Show returns a map[string]any representation of the configuration
+data, err := c.ConfigMode().Show(ctx, "interfaces dummy dum1")
+if err == nil {
+    fmt.Printf("Data: %v\n", data)
+}
 
-    out, resp, err := c.Show.Do(ctx, "interfaces dummy dum1 address")
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
-    fmt.Printf("Data: %v\n", out.Data)
+// ShowValues returns a slice of values
+values, err := c.ConfigMode().ShowValues(ctx, "interfaces ethernet eth0 address")
 ```
 
-### Configure, then Show Object
+#### Batch Configuration
 
 ```go
-
-    out, resp, err := c.Conf.Get(ctx, "interfaces dummy dum1", nil)
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
-    fmt.Printf("Data: %v\n", out.Data)
+err := c.ConfigMode().Configure(ctx, 
+    &vyos.SetRequest{Path: "interfaces dummy dum1"},
+    &vyos.SetRequest{Path: "interfaces dummy dum1 address 10.0.0.1/24"},
+)
 ```
 
-### Configure, then Show Multivalue Object
+#### Save and Load
 
 ```go
+// Save current configuration to the default location
+msg, err := c.ConfigMode().Save(ctx, "")
 
-    options := RetrieveOptions{
-        Multivalue: true,
-    }
+// Save to a specific file
+msg, err := c.ConfigMode().Save(ctx, "/config/backup.config")
 
-    out, resp, err := c.Conf.Get(ctx, "interfaces dummy dum1", options)
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
+// Load from a file
+msg, err := c.ConfigMode().Load(ctx, "/config/backup.config")
 ```
 
-### Configure, then Delete Object
+### Operational Mode (OpMode)
+
+#### Show Operational Data
 
 ```go
-
-    out, resp, err := c.Conf.Delete(ctx, "interfaces dummy dum1")
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
+output, err := c.OpMode().Show(ctx, "system image")
+if err == nil {
+    fmt.Println(output)
+}
 ```
 
-### Configure, then Save
+#### Generate Data
 
 ```go
-
-    out, resp, err := c.Conf.Save(ctx, "")
-
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
+output, err := c.OpMode().Generate(ctx, "pki wireguard key-pair")
 ```
 
-### Configure, then Save File
+#### Reset a Service
 
 ```go
-
-    out, resp, err := c.Conf.Save(ctx, "/config/test300.config")
-
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
+err := c.OpMode().Reset(ctx, "ip bgp 192.0.2.11")
 ```
 
-### Show Object
+#### System Information
 
 ```go
-
-    out, resp, err := c.Show.Do(ctx, "system image")
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
-    fmt.Printf("Data: %v\n", out.Data)
-```
-
-### Generate Object
-
-```go
-
-    out, resp, err := c.Generate.Do(ctx, "pki wireguard key-pair")
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
-    fmt.Printf("Data: %v\n", out.Data)
-```
-
-### Reset Object
-
-```go
-
-    out, resp, err := c.Reset.Do(ctx, "ip bgp 192.0.2.11")
-    if err != nil {
-        panic("Error: %v", err)
-    }
-
-    fmt.Println(out.Success)
-    fmt.Printf("Data: %v\n", out.Data)
-
-```
-
-### Configure, then Load File
-
-```go
-
-    out, resp, err := c.ConfigFile.Load(ctx, "/config/test300.config")
+info, err := c.OpMode().Info(ctx, vyos.InfoRequest{Version: true, Hostname: true})
+if err == nil {
+    fmt.Printf("Version: %s, Hostname: %s\n", info.Version, info.Hostname)
+}
 ```
 
 ## License
