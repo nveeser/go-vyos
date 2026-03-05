@@ -10,8 +10,8 @@ import (
 // OpMode provides the set of methods which map to the operation mode in VyOS
 type OpMode Client
 
-func (c *OpMode) doRequest(ctx context.Context, req request, resp *response) error {
-	return (*Client)(c).doRequest(ctx, req, resp)
+func (c *OpMode) do(ctx context.Context, req request, resp *response) error {
+	return (*Client)(c).do(ctx, req, resp)
 }
 
 type InfoRequest struct {
@@ -23,7 +23,7 @@ var _ request = (*InfoRequest)(nil)
 var _ customRequest = (*InfoRequest)(nil)
 
 func (r InfoRequest) requestPayload() (path string, payload any) {
-	panic("InfoRequest uses httpReq()")
+	panic("InfoRequest uses httpRequest()")
 }
 func (r InfoRequest) httpRequest(u url.URL, token string) (*http.Request, error) {
 	v := url.Values{}
@@ -47,7 +47,7 @@ type InfoResponse struct {
 
 func (c *OpMode) Info(ctx context.Context, req InfoRequest) (*InfoResponse, error) {
 	resp := &response{Data: &InfoResponse{}}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return nil, fmt.Errorf("error HTTP client: %w", err)
 	}
@@ -64,7 +64,7 @@ func (c *OpMode) Show(ctx context.Context, path string) (string, error) {
 		Path:    parsePath(path, false),
 	}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return "", err
 	}
@@ -78,7 +78,7 @@ func (c *OpMode) Generate(ctx context.Context, path string) (string, error) {
 		Path:    parsePath(path, false),
 	}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +94,7 @@ func (s *AddImageRequest) requestPayload() (path string, payload any) {
 }
 
 type imagePayload struct {
-	Op   Op     `json:"op"`
+	Op   op     `json:"op"`
 	URL  string `json:"url,omitempty"`
 	Name string `json:"name,omitempty"`
 }
@@ -102,7 +102,7 @@ type imagePayload struct {
 func (c *OpMode) AddImage(ctx context.Context, url string) (string, error) {
 	req := &AddImageRequest{url}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return "", err
 	}
@@ -120,7 +120,7 @@ func (s *DeleteImageRequest) requestPayload() (path string, payload any) {
 func (c *OpMode) DeleteImage(ctx context.Context, name string) (string, error) {
 	req := &DeleteImageRequest{name}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return "", err
 	}
@@ -135,7 +135,7 @@ func (c *OpMode) Reset(ctx context.Context, path string) error {
 		Path:    parsePath(path, true),
 	}
 	resp := &response{}
-	return c.doRequest(ctx, req, resp)
+	return c.do(ctx, req, resp)
 }
 
 // PowerOff is a helper function to power off the VyOS instance from the client struct.
@@ -146,7 +146,7 @@ func (c *OpMode) PowerOff(ctx context.Context, path string) error {
 		Path:    parsePath(path, true),
 	}
 	resp := &response{}
-	return c.doRequest(ctx, req, resp)
+	return c.do(ctx, req, resp)
 }
 
 // Reboot is a helper function to reboot the VyOS instance from the client struct.
@@ -157,5 +157,5 @@ func (c *OpMode) Reboot(ctx context.Context, path string) error {
 		Path:    parsePath(path, true),
 	}
 	resp := &response{}
-	return c.doRequest(ctx, req, resp)
+	return c.do(ctx, req, resp)
 }

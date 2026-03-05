@@ -5,7 +5,7 @@ go-vyos is a Go client library for accessing the [VyOS REST API](https://docs.vy
 ## Usage
 
 ```go
-import "github.com/ganawaj/go-vyos/vyos"
+import "github.com/nveeser/go-vyos/vyos"
 ```
 
 Construct a new VyOS client by providing the host URL (or host:port) and options like authentication token and TLS configuration.

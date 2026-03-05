@@ -11,33 +11,43 @@ import (
 	"strings"
 )
 
-// Op is a type for the different operational modes of the VyOS API.
-type Op string
+// HTTPError is the error returned from the HTTP request.
+type HTTPError struct {
+	Code int
+	Body string
+}
+
+func (h *HTTPError) Error() string {
+	return fmt.Sprintf("HTTP %s: %s", http.StatusText(h.Code), h.Body)
+}
+
+// op is a type for the different operational modes of the VyOS API.
+type op string
 
 const (
 	// defaultUserAgent is the default user agent used by the VyOS API client.
 	defaultUserAgent = "go-vyos"
 
-	// Op constants
-	OpShowConfig Op = "showConfig"
-	OpShowValues Op = "returnValues"
-	OpShow       Op = "show"
-	OpSet        Op = "set"
-	OpComment    Op = "comment"
-	OpGenerate   Op = "generate"
-	OpConfigure  Op = "configure"
-	OpExists     Op = "exists"
-	OpReset      Op = "reset"
-	OpPowerOff   Op = "poweroff"
-	OpReboot     Op = "reboot"
-	OpAdd        Op = "add"
-	OpDelete     Op = "delete"
-	OpSave       Op = "save"
-	OpLoad       Op = "load"
-	OpConfirm    Op = "confirm"
+	// op constants
+	OpShowConfig op = "showConfig"
+	OpShowValues op = "returnValues"
+	OpShow       op = "show"
+	OpSet        op = "set"
+	OpComment    op = "comment"
+	OpGenerate   op = "generate"
+	OpConfigure  op = "configure"
+	OpExists     op = "exists"
+	OpReset      op = "reset"
+	OpPowerOff   op = "poweroff"
+	OpReboot     op = "reboot"
+	OpAdd        op = "add"
+	OpDelete     op = "delete"
+	OpSave       op = "save"
+	OpLoad       op = "load"
+	OpConfirm    op = "confirm"
 )
 
-func (c *Client) doRequest(ctx context.Context, req request, resp *response) error {
+func (c *Client) do(ctx context.Context, req request, resp *response) error {
 	httpReq, err := c.httpReq(req)
 	if err != nil {
 		return fmt.Errorf("error building http.Request %w", err)
@@ -66,6 +76,9 @@ func (c *Client) doRequest(ctx context.Context, req request, resp *response) err
 	return nil
 }
 
+// httpReq creates the HTTP request from the specified request by creating a POST
+// where the data is provided by the requestPayload method. If the instance
+// supports the custom
 func (c *Client) httpReq(req request) (*http.Request, error) {
 	if pr, ok := req.(customRequest); ok {
 		return pr.httpRequest(*c.baseURL, c.token)
@@ -94,7 +107,11 @@ func (c *Client) httpReq(req request) (*http.Request, error) {
 	return httpReq, nil
 }
 
+// request is the interface consumed by Client.httpReq to build
+// the http.Request instance for a given command.
 type request interface {
+	// requestPayload should return the URL path (within the base URL)
+	// and the payload to pass to the HTTP POST.
 	requestPayload() (path string, payload any)
 }
 
@@ -111,9 +128,10 @@ type response struct {
 
 var _ request = (*pathRequest)(nil)
 
+// pathRequest is the common implementation of the request interface.
 type pathRequest struct {
 	URLPath string   `json:"-"`
-	Op      Op       `json:"op"`
+	Op      op       `json:"op"`
 	Path    []string `json:"path"`
 }
 

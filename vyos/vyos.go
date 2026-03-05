@@ -4,7 +4,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -43,19 +42,19 @@ func NewClient(host string, opts ...Option) (*Client, error) {
 
 func buildURL(host string) (*url.URL, bool) {
 	u, err := url.Parse(host)
-	if err == nil {
+	if err == nil && u.Scheme != "" && u.Host != "" {
 		return u, true
 	}
-	if _, _, err := net.SplitHostPort(host); err == nil {
-		return &url.URL{
-			Scheme: "https",
-			Host:   host,
-		}, true
-	}
-	return nil, false
+	return &url.URL{
+		Scheme: "https",
+		Host:   host,
+	}, true
 }
 
-func (c *Client) OpMode() *OpMode         { return (*OpMode)(c) }
+// OpMode returns the client which provides "op-mode" commands.
+func (c *Client) OpMode() *OpMode { return (*OpMode)(c) }
+
+// ConfigMode provides the client for updating configuration.
 func (c *Client) ConfigMode() *ConfigMode { return (*ConfigMode)(c) }
 
 // Option is the type passed to NewClient to configure the client
@@ -72,18 +71,21 @@ func Token(token string) Option {
 // for calling hosts with self-signed certificates.
 func Insecure() Option {
 	return func(c *Client) {
-		// Type assertion to ensure transport is of type *http.Transport
-		if t, ok := c.httpClient.Transport.(*http.Transport); ok {
-			if t.TLSClientConfig == nil {
-				t.TLSClientConfig = &tls.Config{}
+		transport := c.httpClient.Transport
+	loop:
+		switch x := transport.(type) {
+		case *http.Transport:
+			if x.TLSClientConfig == nil {
+				x.TLSClientConfig = &tls.Config{}
 			}
-			t.TLSClientConfig.InsecureSkipVerify = true
-			return
-		} // Handle the case where the transport is not of type *http.Transport
-		c.httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
+			x.TLSClientConfig.InsecureSkipVerify = true
+		case *loggingTransport:
+			transport = x.RoundTripper
+			goto loop
+
+		case nil:
+			c.httpClient.Transport = &http.Transport{}
+			goto loop
 		}
 	}
 }

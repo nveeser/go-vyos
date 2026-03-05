@@ -7,10 +7,14 @@ import (
 // ConfigMode provides the set of methods which map to the configuration mode in VyOS
 type ConfigMode Client
 
-func (c *ConfigMode) doRequest(ctx context.Context, req request, resp *response) error {
-	return (*Client)(c).doRequest(ctx, req, resp)
+func (c *ConfigMode) do(ctx context.Context, req request, resp *response) error {
+	return (*Client)(c).do(ctx, req, resp)
 }
 
+// ConfigRequest wraps request and provides an exported marker interface
+// to distinguish requests that can be passed to Configure. The payloads
+// of each of them can be combined into a slice and passed as the
+// data of the POST payload.
 type ConfigRequest interface {
 	isConfigCommand()
 	request
@@ -35,7 +39,7 @@ func (r *DeleteRequest) requestPayload() (path string, payload any) {
 }
 
 type CommentRequest struct {
-	Op      Op       `json:"op"`
+	Op      op       `json:"op"`
 	Path    []string `json:"path"`
 	Comment string   `json:"comment"`
 }
@@ -45,46 +49,10 @@ func (r *CommentRequest) requestPayload() (path string, payload any) {
 	return "/configure", r
 }
 
-func (c *ConfigMode) Show(ctx context.Context, path string) (map[string]any, error) {
-	req := &pathRequest{
-		URLPath: "/retrieve",
-		Op:      OpShowConfig,
-		Path:    parsePath(path, true),
-	}
-	resp := &response{Data: map[string]any{}}
-	err := c.doRequest(ctx, req, resp)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Data.(map[string]any), nil
-}
-
-func (c *ConfigMode) ShowValues(ctx context.Context, path string) ([]any, error) {
-	req := &pathRequest{
-		URLPath: "/retrieve",
-		Op:      OpShowValues,
-		Path:    parsePath(path, true),
-	}
+func (c *ConfigMode) Configure(ctx context.Context, reqs ...ConfigRequest) error {
+	req := &configureRequest{Requests: reqs}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Data.([]any), nil
-}
-
-func (c *ConfigMode) Exists(ctx context.Context, path string) (bool, error) {
-	req := &pathRequest{
-		URLPath: "/retrieve",
-		Op:      OpExists,
-		Path:    parsePath(path, true),
-	}
-	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
-	if err != nil {
-		return false, err
-	}
-	return resp.Data.(bool), nil
+	return c.do(ctx, req, resp)
 }
 
 type configureRequest struct {
@@ -100,10 +68,46 @@ func (r *configureRequest) requestPayload() (path string, payload any) {
 	return "/configure", payloads
 }
 
-func (c *ConfigMode) Configure(ctx context.Context, reqs ...ConfigRequest) error {
-	req := &configureRequest{Requests: reqs}
+func (c *ConfigMode) Show(ctx context.Context, path string) (map[string]any, error) {
+	req := &pathRequest{
+		URLPath: "/retrieve",
+		Op:      OpShowConfig,
+		Path:    parsePath(path, true),
+	}
+	resp := &response{Data: map[string]any{}}
+	err := c.do(ctx, req, resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Data.(map[string]any), nil
+}
+
+func (c *ConfigMode) ShowValues(ctx context.Context, path string) ([]any, error) {
+	req := &pathRequest{
+		URLPath: "/retrieve",
+		Op:      OpShowValues,
+		Path:    parsePath(path, true),
+	}
 	resp := &response{}
-	return c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Data.([]any), nil
+}
+
+func (c *ConfigMode) Exists(ctx context.Context, path string) (bool, error) {
+	req := &pathRequest{
+		URLPath: "/retrieve",
+		Op:      OpExists,
+		Path:    parsePath(path, true),
+	}
+	resp := &response{}
+	err := c.do(ctx, req, resp)
+	if err != nil {
+		return false, err
+	}
+	return resp.Data.(bool), nil
 }
 
 func (c *ConfigMode) Set(ctx context.Context, path string) error {
@@ -113,7 +117,7 @@ func (c *ConfigMode) Set(ctx context.Context, path string) error {
 		Path:    parsePath(path, true),
 	}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return err
 	}
@@ -127,7 +131,7 @@ func (c *ConfigMode) Delete(ctx context.Context, path string) error {
 		Path:    parsePath(path, true),
 	}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return err
 	}
@@ -141,16 +145,7 @@ func (c *ConfigMode) Comment(ctx context.Context, comment string, path string) e
 		Comment: comment,
 	}
 	resp := &response{}
-	return c.doRequest(ctx, req, resp)
-}
-
-type cfgFileRequest struct {
-	Op   Op     `json:"op"`
-	File string `json:"fila,omitempty"`
-}
-
-func (s *cfgFileRequest) requestPayload() (path string, payload any) {
-	return "/config-file", s
+	return c.do(ctx, req, resp)
 }
 
 func (c *ConfigMode) Save(ctx context.Context, file string) (string, error) {
@@ -159,7 +154,7 @@ func (c *ConfigMode) Save(ctx context.Context, file string) (string, error) {
 		File: file,
 	}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return "", err
 	}
@@ -169,7 +164,7 @@ func (c *ConfigMode) Save(ctx context.Context, file string) (string, error) {
 func (c *ConfigMode) Load(ctx context.Context, file string) (string, error) {
 	req := &cfgFileRequest{Op: OpLoad, File: file}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return "", err
 	}
@@ -179,9 +174,18 @@ func (c *ConfigMode) Load(ctx context.Context, file string) (string, error) {
 func (c *ConfigMode) CommitConfirm(ctx context.Context) (string, error) {
 	req := &cfgFileRequest{Op: OpConfirm}
 	resp := &response{}
-	err := c.doRequest(ctx, req, resp)
+	err := c.do(ctx, req, resp)
 	if err != nil {
 		return "", err
 	}
 	return resp.Data.(string), nil
+}
+
+type cfgFileRequest struct {
+	Op   op     `json:"op"`
+	File string `json:"fila,omitempty"`
+}
+
+func (s *cfgFileRequest) requestPayload() (path string, payload any) {
+	return "/config-file", s
 }
