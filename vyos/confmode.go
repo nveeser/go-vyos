@@ -21,21 +21,23 @@ type ConfigRequest interface {
 }
 
 type SetRequest struct {
-	Path string
+	Path  string
+	Value string
 }
 
 func (s *SetRequest) isConfigCommand() {}
 func (s *SetRequest) requestPayload() (path string, payload any) {
-	return "/configure", &pathRequest{Op: OpSet, Path: parsePath(s.Path, true)}
+	return "/configure", &pathRequest{Op: OpSet, Path: parsePath(s.Path, true), Value: s.Value}
 }
 
 type DeleteRequest struct {
-	Path string
+	Path  string
+	Value string
 }
 
 func (r *DeleteRequest) isConfigCommand() {}
 func (r *DeleteRequest) requestPayload() (path string, payload any) {
-	return "/configure", &pathRequest{Op: OpDelete, Path: parsePath(r.Path, true)}
+	return "/configure", &pathRequest{Op: OpDelete, Path: parsePath(r.Path, true), Value: r.Value}
 }
 
 type CommentRequest struct {

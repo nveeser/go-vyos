@@ -133,6 +133,7 @@ type pathRequest struct {
 	URLPath string   `json:"-"`
 	Op      op       `json:"op"`
 	Path    []string `json:"path"`
+	Value   string   `json:"value,omitempty"`
 }
 
 func (r *pathRequest) requestPayload() (path string, payload any) {
