@@ -82,8 +82,8 @@ func main() {
 	}
 	{
 		err := c.ConfigMode().Configure(ctx,
-			&vyos.SetRequest{"system option startup-beep"},
-			&vyos.DeleteRequest{"system option startup-beep"})
+			&vyos.SetRequest{Path: "system option", Value: "startup-beep"},
+			&vyos.DeleteRequest{Path: "system option", Value: "startup-beep"})
 		if err != nil {
 			log.Fatalf("error Delete(): %v", err)
 		}

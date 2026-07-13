@@ -21,6 +21,15 @@ func (h *HTTPError) Error() string {
 	return fmt.Sprintf("HTTP %s: %s", http.StatusText(h.Code), h.Body)
 }
 
+type VyOSErr struct {
+	Code int
+	Msg  string
+}
+
+func (v VyOSErr) Error() string {
+	return fmt.Sprintf("HTTP Status(%d): %v", v.Code, v.Msg)
+}
+
 // op is a type for the different operational modes of the VyOS API.
 type op string
 
@@ -54,24 +63,26 @@ func (c *Client) do(ctx context.Context, req request, resp *response) error {
 	}
 	httpResp, err := c.httpClient.Do(httpReq.WithContext(ctx))
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid http request: %w", err)
 	}
+	return c.handleResp(httpResp, resp)
+}
 
-	defer httpResp.Body.Close()
-	if httpResp.StatusCode != 200 {
-		body, err := io.ReadAll(httpResp.Body)
-		if err != nil {
-			log.Printf("error reading failed response body:%s", err)
-		}
-		return &HTTPError{httpResp.StatusCode, string(body)}
-	}
-	// Decode the response body into the provided interface.
-	err = json.NewDecoder(httpResp.Body).Decode(resp)
+func (c *Client) handleResp(httpResp *http.Response, resp *response) error {
+	body, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return err
+		log.Printf("error reading failed response body:%s", err)
 	}
-	if !resp.Success {
-		return fmt.Errorf("vyos error(success=false): %s", resp.Error)
+	err = json.Unmarshal(body, resp)
+	if err == nil {
+		if !resp.Success {
+			return &VyOSErr{Code: httpResp.StatusCode, Msg: resp.Error}
+		}
+	} else {
+		log.Printf("error reading response body:%s", err)
+	}
+	if httpResp.StatusCode != 200 {
+		return &HTTPError{httpResp.StatusCode, string(body)}
 	}
 	return nil
 }
@@ -104,6 +115,7 @@ func (c *Client) httpReq(req request) (*http.Request, error) {
 		return nil, fmt.Errorf("error building http request %w", err)
 	}
 	httpReq.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+	httpReq.Header.Add("Accept", "application/json")
 	return httpReq, nil
 }
 
@@ -124,6 +136,13 @@ type response struct {
 	Success bool   `json:"success,omitempty"`
 	Data    any    `json:"data,omitempty"`
 	Error   string `json:"error,omitempty"`
+}
+
+func (r *response) vyosError(statusCode int) error {
+	if !r.Success {
+		return VyOSErr{Code: statusCode, Msg: r.Error}
+	}
+	return nil
 }
 
 var _ request = (*pathRequest)(nil)
